@@ -6,17 +6,15 @@ Uses fastmcp for the MCP framework, yt-dlp for YouTube operations,
 and faster-whisper for local transcription.
 """
 
-import asyncio
-import json
 import logging
 import os
 import re
-import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+import yt_dlp
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field, field_validator
@@ -36,12 +34,7 @@ class ServerConfig:
     log_level: str = "INFO"
     cleanup_temp_files: bool = True
     
-    # API keys (optional)
-    assemblyai_api_key: Optional[str] = None
-    google_cloud_api_key: Optional[str] = None
-    aws_access_key: Optional[str] = None
-    aws_secret_key: Optional[str] = None
-    aws_region: str = "us-east-1"
+
     
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -53,11 +46,6 @@ class ServerConfig:
             max_audio_length=int(os.getenv("MAX_AUDIO_LENGTH", "3600")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             cleanup_temp_files=os.getenv("CLEANUP_TEMP_FILES", "true").lower() == "true",
-            assemblyai_api_key=os.getenv("ASSEMBLYAI_API_KEY"),
-            google_cloud_api_key=os.getenv("GOOGLE_CLOUD_API_KEY"),
-            aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            aws_region=os.getenv("AWS_REGION", "us-east-1"),
         )
     
     def validate(self) -> None:
@@ -113,9 +101,7 @@ class TranscriptionError(YouTubeError):
     pass
 
 
-class DependencyError(YouTubeError):
-    """Required dependency not installed."""
-    pass
+
 
 
 # ============================================================================
@@ -192,19 +178,11 @@ class TranscriptionOptions(BaseModel):
     )
     model: Optional[str] = Field(
         default=None,
-        description="Transcription model to use"
+        description="Whisper model to use (tiny, base, small, medium, large)"
     )
     word_timestamps: bool = Field(
         default=True,
         description="Include word-level timestamps"
-    )
-    speaker_diarization: bool = Field(
-        default=False,
-        description="Identify different speakers"
-    )
-    translate: bool = Field(
-        default=False,
-        description="Translate to English"
     )
     
     @field_validator('language')
@@ -572,63 +550,12 @@ async def transcribe_with_whisper(
     )
 
 
-async def transcribe_with_assemblyai(
-    audio_path: str,
-    language: Optional[str] = None,
-    word_timestamps: bool = True,
-    speaker_diarization: bool = False,
-) -> TranscriptResponse:
-    """Transcribe audio using AssemblyAI."""
-    if not config.assemblyai_api_key:
-        raise DependencyError("ASSEMBLYAI_API_KEY not configured")
-    
-    try:
-        import assemblyai as aai
-    except ImportError:
-        raise DependencyError("assemblyai not installed. Run: pip install assemblyai")
-    
-    aai.settings.api_key = config.assemblyai_api_key
-    transcriber = aai.Transcriber()
-    
-    transcribe_config = aai.TranscriptionConfig(
-        language=language,
-        word_timestamps=word_timestamps,
-        speaker_diarization=speaker_diarization,
-    )
-    
-    logger.info("Starting AssemblyAI transcription")
-    transcript = transcriber.transcribe(audio_path, config=transcribe_config)
-    
-    if transcript.status == aai.TranscriptStatus.error:
-        raise TranscriptionError(f"AssemblyAI failed: {transcript.error}")
-    
-    segments = []
-    full_text = ""
-    for utterance in transcript.utterances:
-        segments.append(TranscriptSegment(
-            start=utterance.start,
-            end=utterance.end,
-            text=utterance.text,
-            speaker=utterance.speaker if speaker_diarization else None,
-        ))
-        full_text += utterance.text + " "
-    
-    return TranscriptResponse(
-        audio_path=audio_path,
-        language=language or "unknown",
-        segments=segments,
-        full_text=full_text.strip(),
-        transcription_method="assemblyai",
-        model_used="assemblyai",
-        duration_seconds=transcript.duration,
-    )
-
 
 async def _transcribe_audio(
     audio_path: str,
     options: TranscriptionOptions,
 ) -> TranscriptResponse:
-    """Transcribe an audio file using available methods."""
+    """Transcribe an audio file using local Whisper model."""
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
     
@@ -639,27 +566,13 @@ async def _transcribe_audio(
             f"Audio too long ({duration:.0f}s). Max: {config.max_audio_length}s"
         )
     
-    # Try methods in order: AssemblyAI first, then Whisper
-    methods = []
-    if config.assemblyai_api_key:
-        methods.append(("assemblyai", transcribe_with_assemblyai))
-    methods.append(("whisper", transcribe_with_whisper))
-    
-    last_error = None
-    for method_name, method_func in methods:
-        try:
-            return await method_func(
-                audio_path,
-                language=options.language,
-                word_timestamps=options.word_timestamps,
-                speaker_diarization=options.speaker_diarization,
-                model_size=options.model,
-            )
-        except Exception as e:
-            last_error = e
-            logger.warning(f"Method {method_name} failed: {e}")
-    
-    raise TranscriptionError(f"All transcription methods failed: {last_error}")
+    # Use Whisper for transcription
+    return await transcribe_with_whisper(
+        audio_path,
+        language=options.language,
+        model_size=options.model,
+        word_timestamps=options.word_timestamps,
+    )
 
 
 async def _transcribe_video(
@@ -724,61 +637,49 @@ async def download_audio(
     return _download_audio(video_id, output_format=format)
 
 
-@mcp.tool(description="Transcribe a YouTube video")
+@mcp.tool(description="Transcribe a YouTube video using local Whisper model")
 async def transcribe_video(
     video_url: str,
     language: Optional[str] = None,
     model: Optional[str] = None,
     word_timestamps: bool = True,
-    speaker_diarization: bool = False,
-    translate: bool = False,
 ) -> TranscriptResponse:
     """Transcribe a YouTube video.
     
     Args:
         video_url: YouTube video URL or video ID
         language: Language code (e.g., 'en', 'fr', 'es')
-        model: Transcription model to use
+        model: Whisper model to use (tiny, base, small, medium, large)
         word_timestamps: Include word-level timestamps
-        speaker_diarization: Identify different speakers
-        translate: Translate to English
     """
     video_id = extract_video_id(video_url)
     options = TranscriptionOptions(
         language=language,
         model=model,
         word_timestamps=word_timestamps,
-        speaker_diarization=speaker_diarization,
-        translate=translate,
     )
     return await _transcribe_video(video_id, options)
 
 
-@mcp.tool(description="Transcribe an audio file")
+@mcp.tool(description="Transcribe an audio file using local Whisper model")
 async def transcribe_audio(
     audio_path: str,
     language: Optional[str] = None,
     model: Optional[str] = None,
     word_timestamps: bool = True,
-    speaker_diarization: bool = False,
-    translate: bool = False,
 ) -> TranscriptResponse:
     """Transcribe an audio file.
     
     Args:
         audio_path: Path to audio file
         language: Language code (e.g., 'en', 'fr', 'es')
-        model: Transcription model to use
+        model: Whisper model to use (tiny, base, small, medium, large)
         word_timestamps: Include word-level timestamps
-        speaker_diarization: Identify different speakers
-        translate: Translate to English
     """
     options = TranscriptionOptions(
         language=language,
         model=model,
         word_timestamps=word_timestamps,
-        speaker_diarization=speaker_diarization,
-        translate=translate,
     )
     return await _transcribe_audio(audio_path, options)
 

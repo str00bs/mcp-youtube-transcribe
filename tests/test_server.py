@@ -195,6 +195,7 @@ class TestPydanticModels:
             word_timestamps=False,
         )
         assert options.language == "fr"
+        assert options.model == "small"
         assert options.word_timestamps is False
 
 

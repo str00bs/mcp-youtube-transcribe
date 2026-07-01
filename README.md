@@ -1,6 +1,6 @@
 # YouTube Transcription MCP Server
 
-A production-ready [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/spec) server for transcribing YouTube videos. This server can be connected to AI assistants like [Vibe Code CLI](https://github.com/mistralai/vibe), [Cursor](https://www.cursor.com/), or any other MCP-compatible client.
+A production-ready [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/spec) server for transcribing YouTube videos using local Whisper models. This server can be connected to AI assistants like [Vibe Code CLI](https://github.com/mistralai/vibe), [Cursor](https://www.cursor.com/), or any other MCP-compatible client.
 
 ## Features
 
@@ -8,11 +8,10 @@ A production-ready [Model Context Protocol (MCP)](https://github.com/modelcontex
 - **Caption Extraction**: List and download existing YouTube captions/subtitles
 - **Audio Download**: Extract audio from YouTube videos in various formats (MP3, WAV, etc.)
 - **Local Transcription**: On-device transcription using Whisper models (faster-whisper)
-- **Cloud Transcription**: Support for AssemblyAI (with API key)
 - **Word-Level Timestamps**: Precise timing for each word or segment
-- **Speaker Diarization**: Identify different speakers (with supported services)
 - **Multi-Language Support**: Transcribe videos in multiple languages
 - **Automatic Cleanup**: Optional automatic cleanup of temporary files
+- **GPU Support**: Automatic GPU detection and usage for faster transcription
 
 ## Quick Start
 
@@ -151,12 +150,11 @@ print(f"Downloaded to: {audio.audio_path}")
 ### Transcribe a YouTube Video
 
 ```python
-transcript = await tools.youtube_transcription.transcribe_video_tool(
+transcript = await tools.youtube_transcription.transcribe_video(
     video_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     language="en",
     model="small",
-    word_timestamps=True,
-    speaker_diarization=False
+    word_timestamps=True
 )
 print(f"Full text: {transcript.full_text}")
 for segment in transcript.segments:
@@ -166,7 +164,7 @@ for segment in transcript.segments:
 ### Transcribe an Audio File
 
 ```python
-transcript = await tools.youtube_transcription.transcribe_audio_tool(
+transcript = await tools.youtube_transcription.transcribe_audio(
     audio_path="/path/to/audio.mp3",
     language="en",
     word_timestamps=True
@@ -184,22 +182,17 @@ print(transcript.full_text)
 | `MAX_AUDIO_LENGTH` | `3600` | Maximum audio length in seconds |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `CLEANUP_TEMP_FILES` | `true` | Automatically clean up temporary files |
-| `ASSEMBLYAI_API_KEY` | - | AssemblyAI API key for cloud transcription |
 
-## Transcription Methods
 
-The server supports multiple transcription backends, tried in order of preference:
+## Transcription Method
 
-### 1. AssemblyAI (Cloud)
-- **Pros**: Fast, accurate, supports speaker diarization
-- **Cons**: Requires API key, has costs
-- **Setup**: Set `ASSEMBLYAI_API_KEY` environment variable
+The server uses **local Whisper** (faster-whisper) for all transcription:
 
-### 2. Local Whisper (faster-whisper)
-- **Pros**: Free, offline, no API limits
+- **Pros**: Free, offline, no API limits, no external dependencies, privacy-friendly
 - **Cons**: Slower on CPU, requires GPU for best performance
 - **Models**: tiny, base, small, medium, large
 - **Languages**: 99+ languages
+- **Hardware**: Automatic GPU detection if CUDA is available
 
 ## Performance Tips
 
