@@ -1,17 +1,25 @@
-# Core Dependencies (required)
-mcp>=1.0.0
-faster-whisper>=0.10.0
+# Core dependencies (required)
+# MCP Server Framework
+fastmcp>=3.0.0
+
+# YouTube video downloading and metadata
 yt-dlp>=2024.0.0
+
+# Local transcription (CPU/GPU)
+faster-whisper>=0.10.0
+
+# Data validation and serialization
 pydantic>=2.0.0
 
-# Optional: GPU support for faster-whisper
-# faster-whisper[cuda]
-
 # Optional: Cloud transcription services
+# AssemblyAI (faster, more accurate)
 # assemblyai>=0.2.0
+
+# Google Cloud Speech-to-Text
 # google-cloud-speech>=2.0.0
+
+# AWS Transcribe
 # boto3>=1.26.0
 
-# Optional: For better performance
-# torch>=2.0.0
-# ffmpeg-python>=0.2.0
+# Optional: For GPU support
+# Install with: pip install faster-whisper[cuda]
